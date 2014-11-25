@@ -9,32 +9,38 @@ QT += quick qml widgets gui-private
 CONFIG += release qtquickcompiler
 QMAKE_INFO_PLIST = Info.plist
 osx: LIBS += -framework WebKit -framework Cocoa
+unix:!osx{
+    QT += webkitwidgets
+}
 
 HEADERS += fileio.h \
     webview.h
-SOURCES += fileio.cpp main.cpp
+SOURCES += fileio.cpp main.cpp \
+    webview.cpp
 OBJECTIVE_SOURCES += \
     webview.mm
 
+QML_IMPORT_PATH = .
+
 OTHER_FILES += qml/*.qml \
     TODO.txt \
-    qml/MultiTouchButton.qml \
-    qml/ControlPanelSubMenu.qml \
-    qml/ControlPanel.qml \
-    qml/RecordButton.qml \
-    qml/MenuButton.qml \
-    qml/RadioButtonGroup.qml \
-    qml/PlayMenu.qml \
-    qml/PlayMenuRow.qml \
-    qml/ProxyButton.qml \
-    qml/SearchView.qml \
-    qml/TimelineFlickable \
-    qml/TimelineCanvas \
-    qml/TimelineMenu \
-    qml/OpacitySlider.qml
 
-qml.files = $$PWD/qml
-osx: qml.path = ./Contents/Resources
-dummy.files = $$PWD/dummy.jpeg
-osx: dummy.path = ./Contents/Resources
-QMAKE_BUNDLE_DATA += qml dummy
+unix:!macosx{
+    qml.path = $${OUT_PWD}/qml
+    qml.files = qml/*.qml
+    INSTALLS += qml
+}
+
+osx{
+ qml.files = qml
+ qml.path = ./Contents/Resources
+ dummy.files = $$PWD/dummy.jpeg
+ dummy.path = ./Contents/Resources
+ QMAKE_BUNDLE_DATA += qml dummy
+}
+
+
+OTHER_FILES +=
+    TODO.txt \
+
+
