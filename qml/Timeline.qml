@@ -3,24 +3,14 @@ import QtQuick 2.1
 Rectangle {
     id: root
     property int cellWidth: myApp.style.cellWidth
-    property real time: myApp.model.time
 
-    onTimeChanged: canvas.requestPaint()
     Connections {
         target: myApp.model
-        onStatesUpdated: canvas.requestPaint()
-        onFocusedLayerIndexChanged: canvas.requestPaint()
-        onMsPerFrameChanged: canvas.requestPaint()
-    }
-
-    Connections {
-        target: myApp.timelineFlickable
-        onPlayingChanged: canvas.requestPaint()
-    }
-
-    Connections {
-        target: myApp.stage
-        onTimelinePlayChanged: canvas.requestPaint()
+        onTimeChanged: canvas.requestPaint()
+        onSelectedSpritesUpdated: canvas.requestPaint()
+        onKeyframesUpdated: canvas.requestPaint()
+        onMpfChanged: canvas.requestPaint()
+        onRecordingChanged: canvas.requestPaint()
     }
 
     color: "white"
@@ -30,10 +20,12 @@ Rectangle {
         anchors.fill: parent
         renderTarget: Canvas.Image
         property real lineWidth: 1.0
-        property int lastLayerIndex: -1
+        property Item lastSprite: null
 //        antialiasing: false
 
         onPaint: {
+            var time = myApp.model.time
+
             var ctx = getContext('2d');
             ctx.strokeStyle = myApp.style.timelineline;
             ctx.lineWidth = 1
@@ -42,16 +34,18 @@ Rectangle {
 
             var timeShift = (width / (2 * cellWidth));
 
-            // If there is no selected layer, show the last layer instead
-            var layerIndex = myApp.model.focusedLayerIndex;
-            if (layerIndex == -1)
-                layerIndex = lastLayerIndex
-            lastLayerIndex = layerIndex
+            // If there is no selected sprite, show the last sprite instead
+            var sprites = myApp.model.selectedSprites;
+            if (sprites.length > 0) {
+                var sprite = sprites[0];
+                lastSprite = sprite;
+            } else {
+                var useLast = myApp.model.sprites.indexOf(lastSprite) != -1;
+                if (useLast)
+                    sprite = lastSprite;
+            }
 
-            var layer = myApp.model.layers[layerIndex];
-            if (layer) {
-                var sprite = layer.sprite;
-
+            if (sprite) {
                 var grd = ctx.createLinearGradient(0, 0, width, 200);
                 grd.addColorStop(0.00, '#516B89');
                 grd.addColorStop(0.25, '#9FBAE0');
@@ -72,7 +66,7 @@ Rectangle {
 
             ctx.font = "15px Arial";
             ctx.fillStyle = myApp.style.timelineline;
-            var timeBetweenTickmarks = 30; // sec = (30 / myApp.model.msPerFrame)
+            var timeBetweenTickmarks = 30; // sec = (30 / myApp.model.mpf)
             var halfTickCount = Math.ceil(width / (2 * cellWidth * timeBetweenTickmarks));
             for (var tickmark = -halfTickCount; tickmark <= halfTickCount; ++tickmark) {
                 var relativeTime = (tickmark * timeBetweenTickmarks) - (time % timeBetweenTickmarks);
@@ -83,7 +77,7 @@ Rectangle {
                 var posX = (relativeTime + timeShift) * cellWidth;
                 ctx.fillRect(posX, 0, 2, parent.height);
 
-                var clockTimeSec = (myApp.model.msPerFrame * absoluteTime) / 1000;
+                var clockTimeSec = (myApp.model.mpf * absoluteTime) / 1000;
                 var hours = Math.floor(clockTimeSec / 3600) % 24;
                 var minutes = Math.floor(clockTimeSec / 60) % 60;
                 var seconds = Math.floor(clockTimeSec % 60);
@@ -94,7 +88,7 @@ Rectangle {
                 ctx.fillText(label, posX + 5, parent.height - 2);
             }
 
-            if (myApp.stage.timelinePlay)
+            if (myApp.model.recording)
                 ctx.fillStyle = "red"
             else
                 ctx.fillStyle = myApp.style.timelineline;

@@ -5,20 +5,13 @@
 TEMPLATE = app
 TARGET = animstudio
 INCLUDEPATH += .
-QT += quick qml widgets gui-private
+QT += quick qml gui-private
 CONFIG += release qtquickcompiler
 QMAKE_INFO_PLIST = Info.plist
 osx: LIBS += -framework WebKit -framework Cocoa
-unix:!osx{
-    QT += webkitwidgets
-}
 
-HEADERS += fileio.h \
-    webview.h
-SOURCES += fileio.cpp main.cpp \
-    webview.cpp
-OBJECTIVE_SOURCES += \
-    webview.mm
+HEADERS += fileio.h
+SOURCES += fileio.cpp main.cpp
 
 QML_IMPORT_PATH = .
 
@@ -42,5 +35,23 @@ osx{
 
 OTHER_FILES +=
     TODO.txt \
+    qml/MultiTouchButton.qml \
+    qml/RecordButton.qml \
+    qml/RadioButtonGroup.qml \
+    qml/SearchView.qml \
+    qml/TimeController \
+    qml/TimelineCanvas \
+    qml/OpacitySlider.qml \
+    qml/MenuController.qml \
+    qml/MenuRow.qml \
+    qml/MenuButton.qml \
+    qml/PlaySlider.qml
 
+qml.files = $$PWD/qml
+osx: qml.path = ./Contents/Resources
+dummy.files = $$PWD/dummy.jpeg
+osx: dummy.path = ./Contents/Resources
+QMAKE_BUNDLE_DATA += qml dummy
 
+DISTFILES += \
+    qml/RecordingIndicator.qml

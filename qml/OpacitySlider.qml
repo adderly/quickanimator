@@ -1,61 +1,100 @@
 import QtQuick 2.0
 
-PlayMenuRow {
+MenuRow {
     id: opacityMenu
     property bool guard: false
+    property Item lastSprite: null
+    property bool inSequence: false
+
+    unflickable: !myApp.model.hasSelection
 
     function syncWithSelectedLayer() {
-        if (!myApp.model.hasSelection)
+        if (myApp.model.hasSelection) {
+            var sprite = myApp.model.selectedSprites[0];
+            lastSprite = sprite;
+        } else {
+            var useLast = myApp.model.sprites.indexOf(lastSprite) != -1;
+            if (useLast)
+                sprite = lastSprite;
+        }
+        if (!sprite)
             return
         guard = true
-        x = myApp.model.selectedLayers[0].sprite.opacity * (parent.width - width)
+        x = sprite.opacity * (parent.width - width)
         guard = false
     }
 
-    function writeOpacityToKeyframes()
-    {
-        for (var i in myApp.model.selectedLayers) {
-            var layer = myApp.model.selectedLayers[i];
-            var keyframe = myApp.model.getOrCreateKeyframe(layer);
-            var sprite = layer.sprite
-            sprite.opacity = x / (parent.width - width)
-            keyframe.opacity = sprite.opacity
+    onIsCurrentChanged: {
+        if (isCurrent) {
+            myApp.model.clearRecordState();
+            myApp.model.recordsOpacity = true;
+            syncWithSelectedLayer()
+        } else {
+            // fixme: store previous record state
+            myApp.model.clearRecordState();
+            myApp.model.recordsPositionX = true;
+            myApp.model.recordsPositionY = true;
         }
     }
 
-    onIsCurrentChanged: syncWithSelectedLayer()
-    onXChanged: if (!guard) writeOpacityToKeyframes()
-
     Connections {
-        target: opacityMenu.isCurrent ? myApp.model : null
-        onSelectedLayersUpdated: opacityMenu.syncWithSelectedLayer()
-        onTimeChanged: {
-            if (flickable.isPressed && myApp.stage.timelinePlay)
-                opacityMenu.writeOpacityToKeyframes()
-            else
-                opacityMenu.syncWithSelectedLayer()
+        target: isCurrent ? myApp.model : null
+        onSelectedSpritesUpdated: syncWithSelectedLayer()
+        onTimeChanged: syncWithSelectedLayer()
+    }
+
+    onXChanged: {
+        if (guard)
+            return;
+
+        if (beginRecordingTimer.running)
+            beginRecordingTimer.triggered();
+        if (inSequence) {
+            for (var i in myApp.model.selectedSprites) {
+                var sprite = myApp.model.selectedSprites[i];
+                var changes = { opacity: x / (parent.width - width) }
+                sprite.updateKeyframeSequence(myApp.model.time, changes);
+            }
         }
     }
 
     Connections {
         target: opacityMenu.isCurrent ? flickable : null
-        onPressed: {
-            myApp.model.recordsOpacity = true
-            myApp.model.inLiveDrag = true
-            if (myApp.stage.timelinePlay)
-                myApp.timelineFlickable.stagePlay = true;
-        }
+        onPressed: beginRecordingTimer.restart();
         onReleased: {
-            myApp.model.recordsOpacity = false
-            myApp.model.inLiveDrag = false
-            if (myApp.stage.timelinePlay)
-                myApp.timelineFlickable.stagePlay = false;
+            beginRecordingTimer.stop();
+            myApp.timeController.recordPlay = false;
+            if (inSequence) {
+                for (var i in myApp.model.selectedSprites) {
+                    var sprite = myApp.model.selectedSprites[i];
+                    var changes = { opacity: sprite.opacity }
+                    sprite.endKeyframeSequence(myApp.model.time, changes);
+                }
+                inSequence = false;
+            }
+        }
+    }
+
+    Timer {
+        id: beginRecordingTimer
+        interval: 500
+        onTriggered: {
+            stop();
+            myApp.timeController.recordPlay = myApp.model.recording;
+            for (var i in myApp.model.selectedSprites) {
+                var sprite = myApp.model.selectedSprites[i];
+                var changes = { opacity: sprite.opacity }
+                sprite.beginKeyframeSequence(myApp.model.time, changes);
+            }
+            inSequence = true;
         }
     }
 
     Rectangle {
         width: 70
         height: parent.height
-        color: "blue"
+        color: unflickable ? "transparent" : border.color
+        border.color: "blue"
+        border.width: 4
     }
 }

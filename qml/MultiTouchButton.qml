@@ -17,9 +17,28 @@ Rectangle {
     width: 100
     radius: 4
 
+    property double pressTime: 0
+    property int clickCount: 0
+
     onClicked: {
         if (checkable)
             checked = !checked;
+    }
+
+    function setPressed(pressed, inside)
+    {
+        if (pressed) {
+            if (new Date().getTime() - pressTime > 300)
+                clickCount = 0
+            pressTime = (new Date()).getTime();
+            root.pressed = true;
+        } else {
+            root.pressed = false;
+            if (inside) {
+                if (new Date().getTime() - pressTime < 300)
+                    root.clicked(++clickCount);
+            }
+        }
     }
 
     MultiPointTouchArea {
@@ -28,8 +47,6 @@ Rectangle {
         property TouchPoint activeTouchPoint: null
         touchPoints: [ TouchPoint { id: tp1; }, TouchPoint { id: tp2; } ]
         property TouchPoint tp: null
-        property double pressTime: 0
-        property int clickCount: 0
 
         onPressed: {
             if (tp1.pressed && contains(Qt.point(tp1.x, tp1.y)))
@@ -38,22 +55,14 @@ Rectangle {
                 tp = tp2;
             else
                 return;
-
-            if (new Date().getTime() - pressTime > 300)
-                clickCount = 0
-            pressTime = (new Date()).getTime();
-            root.pressed = true;
+            setPressed(true, true);
         }
 
         onReleased: {
             // work around double release callback:
             if (root.pressed) {
-                root.pressed = tp.pressed;
-                if (contains(Qt.point(tp.x, tp.y))) {
-                    tp = null;
-                    if (new Date().getTime() - pressTime < 300)
-                        root.clicked(++clickCount);
-                }
+                setPressed(tp.pressed, contains(Qt.point(tp.x, tp.y)));
+                tp = null;
             }
         }
     }

@@ -6,7 +6,8 @@ Item {
     x: parent.width / 2
     y: parent.height / 2
 
-    property var layerRef: null
+    property bool selected: false
+    property Item focusIndicator: null
 
     property real anchorX: childrenRect.width / 2
     property real anchorY: childrenRect.height / 2
@@ -29,14 +30,17 @@ Item {
     property var _toKeyframe
     property bool _invalidCache: true
 
+    property var _firstKeyframeInSequence: null
+    property var _keyframeSequencePreState: null
+
     objectName: "unknown sprite"
 
     function setTime(time)
     {
         _updateCurrentKeyframes(time);
         spriteTime = time;
-        if (layerRef.selected && model.inLiveDrag)
-            _interpolateWithRecordOptionFilter(spriteTime)
+        if (selected && _firstKeyframeInSequence)
+            _interpolateWithSequenceFilter(spriteTime)
         else
             _interpolate(spriteTime)
     }
@@ -48,6 +52,11 @@ Item {
                 ? getCurrentKeyframe() : _getKeyframeBinarySearch(intTime);
     }
 
+    function updateVolatileIndex(keyframe)
+    {
+        return getKeyframe(keyframe.time)
+    }
+
     function getCurrentKeyframe()
     {
         _updateCurrentKeyframes(spriteTime);
@@ -56,10 +65,10 @@ Item {
 
     function addKeyframe(keyframe)
     {
-        var index = keyframes.length === 0 ? 0 : getKeyframe(keyframe.time).volatileIndex + 1;
-        keyframes.splice(index, 0, keyframe);
-        myApp.model.testAndSetEndTime(keyframe.time);
+        keyframe.volatileIndex = keyframes.length === 0 ? 0 : getKeyframe(keyframe.time).volatileIndex + 1;
+        keyframes.splice(keyframe.volatileIndex, 0, keyframe);
         _invalidCache = true;
+        model.callbackKeyframeAdded(sprite, keyframe);
     }
 
     function removeKeyframe(keyframe)
@@ -67,6 +76,7 @@ Item {
         keyframes.splice(keyframes.indexOf(keyframe), 1);
         _invalidCache = true;
         setTime(spriteTime);
+        model.callbackKeyframeRemoved(sprite, keyframe);
     }
 
     function createKeyframe(time)
@@ -78,15 +88,115 @@ Item {
             x:sprite.x,
             y:sprite.y,
             z:sprite.z,
-            anchorX: tScale.origin.x,
-            anchorY: tScale.origin.y,
+            anchorX:tScale.origin.x,
+            anchorY:tScale.origin.y,
             width:sprite.width,
             height:sprite.height,
-            rotation:transRotation,
-            scale:transScaleX,
+            transRotation:transRotation,
+            transScaleX:transScaleX,
+            transScaleY:transScaleY,
             opacity:sprite.opacity,
-            visible: sprite.visible
+            visible:sprite.visible,
+            changedProps:null,
+            volatileIndex:0
         };
+    }
+
+    function cloneKeyframe(keyframe)
+    {
+        // NB: Note that clone will copy props
+        // like time and volatileIndex as well
+        var clone = new Object
+        for (var key in keyframe)
+           clone[key] = keyframe[key];
+        return clone
+    }
+
+    function beginKeyframeSequence(time, props)
+    {
+        // All updates done in a sequence is seen as belonging together. We can then do some
+        // sensible post processing in the end to ensure that existing (but unmodified) keyframes
+        // in-between appear connected to the sequence as well.
+
+        // Save the state of the keyframe in
+        // front of the sequence for clamping later
+        var intTime = Math.floor(time);
+        var keyframe = getKeyframe(intTime);
+        _keyframeSequencePreState = new Object
+        for (var key in props)
+            _keyframeSequencePreState[key] = keyframe[key];
+
+        _firstKeyframeInSequence = updateKeyframeSequence(time, props)
+        return _firstKeyframeInSequence
+    }
+
+    function updateKeyframeSequence(time, props)
+    {
+        var intTime = Math.floor(time);
+        var keyframe = getKeyframe(intTime);
+        var prevKeyframe = keyframe
+
+        if (keyframe.time !== intTime)
+            keyframe = createKeyframe(intTime);
+
+        // Mark it as updated so that we know which
+        // keyframes to post-processed in the end
+        keyframe.updated = true;
+
+        if (time === spriteTime) {
+            // The sprite is currently at the update time
+            // so update keyframe and sprite in one loop
+            for (var key in props) {
+                var prop = props[key]
+                keyframe[key] = prop;
+                sprite[key] = prop;
+            }
+        } else {
+            for (key in props)
+                keyframe[key] = props[key];
+        }
+
+        if (keyframe !== prevKeyframe)
+            addKeyframe(keyframe);
+
+        return keyframe;
+    }
+
+    function endKeyframeSequence(time, props)
+    {
+        var lastKeyframeInSequence = updateKeyframeSequence(time, props)
+
+        // All keyframes in a sequence [_firstKeyframeInSequence, lastKeyframeInSequence] should get
+        // updated, even if no changes occured at the time of a specific keyframe. Otherwise the
+        // sprite will "jump" when entering unupdated keyframes in a sequence.
+        for (var i = _firstKeyframeInSequence.volatileIndex; i <= lastKeyframeInSequence.volatileIndex; ++i) {
+            var keyframe = keyframes[i];
+            if (keyframe.updated) {
+                keyframe.updated = false;
+            } else {
+                var prevKeyframe = keyframes[i-1];
+                for (var key in props)
+                    keyframe[key] = prevKeyframe[key];
+            }
+        }
+
+        // As long as we find keyframes trailing the sequence that has the same value as the
+        // keyframe in front of the sequence, we choose to clamp them to the sequence as well
+        for (i = lastKeyframeInSequence.volatileIndex + 1; i < keyframes.length; ++i) {
+            keyframe = keyframes[i];
+            var keyframeModified = false
+            for (key in props) {
+                if (keyframe[key] === _keyframeSequencePreState[key]) {
+                    keyframe[key] = lastKeyframeInSequence[key];
+                    keyframeModified = true
+                }
+            }
+            if (!keyframeModified)
+                break;
+        }
+
+        _firstKeyframeInSequence = null;
+        _keyframeSequencePreState = null;
     }
 
     function _createKeyframeRelativeToParent(time, keyframeParent)
@@ -126,8 +236,8 @@ Item {
         translatedKeyframe.parent = keyframeParent;
         translatedKeyframe.x = translatedHotspot.x - (sprite.width / 2);
         translatedKeyframe.y = translatedHotspot.y - (sprite.height / 2);
-        translatedKeyframe.rotation = gRotation - gItemRotation;
-        translatedKeyframe.scale = gScale / gItemScale;
+        translatedKeyframe.transRotation = gRotation - gItemRotation;
+        translatedKeyframe.transScale = gScale / gItemScale;
 
         return translatedKeyframe;
     }
@@ -145,8 +255,8 @@ Item {
         var translated = _createKeyframeRelativeToParent(_fromKeyframe.time, p);
         _fromKeyframe.x = translated.x;
         _fromKeyframe.y = translated.y;
-        _fromKeyframe.scale = translated.scale;
-        _fromKeyframe.rotation = translated.rotation;
+        _fromKeyframe.transScale = translated.transScale;
+        _fromKeyframe.transRotation = translated.transRotation;
     }
 
     function _interpolate(time)
@@ -162,24 +272,26 @@ Item {
             z = keyframe.z;
             anchorX = keyframe.anchorX;
             anchorY = keyframe.anchorY;
-            transScaleX = transScaleY = keyframe.scale;
-            transRotation = keyframe.rotation;
+            transScaleX = keyframe.transScaleX;
+            transScaleY = keyframe.transScaleY;
+            transRotation = keyframe.transRotation;
             opacity = keyframe.opacity;
         } else {
-            var reparentKeyframeMs = keyframe.time * model.msPerFrame
-            var advanceMs = (spriteTime * model.msPerFrame) - reparentKeyframeMs;
+            var reparentKeyframeMs = keyframe.time * model.mpf
+            var advanceMs = (spriteTime * model.mpf) - reparentKeyframeMs;
             x = _interpolated(keyframe.x, _toKeyframe.x, advanceMs, "linear");
             y = _interpolated(keyframe.y, _toKeyframe.y, advanceMs, "linear");
             z = _interpolated(keyframe.z, _toKeyframe.z, advanceMs, "linear");
             anchorX = _interpolated(keyframe.anchorX, _toKeyframe.anchorX, advanceMs, "linear");
             anchorY = _interpolated(keyframe.anchorY, _toKeyframe.anchorY, advanceMs, "linear");
-            transScaleX = transScaleY = _interpolated(keyframe.scale, _toKeyframe.scale, advanceMs, "linear");
-            transRotation = _interpolated(keyframe.rotation, _toKeyframe.rotation, advanceMs, "linear");
+            transScaleX = _interpolated(keyframe.transScaleX, _toKeyframe.transScaleX, advanceMs, "linear");
+            transScaleY = _interpolated(keyframe.transScaleY, _toKeyframe.transScaleY, advanceMs, "linear");
+            transRotation = _interpolated(keyframe.transRotation, _toKeyframe.transRotation, advanceMs, "linear");
             opacity = _interpolated(keyframe.opacity, _toKeyframe.opacity, advanceMs, "linear");
         }
     }
 
-    function _interpolateWithRecordOptionFilter(time)
+    function _interpolateWithSequenceFilter(time)
     {
         var keyframe = _fromKeyframe.reparentKeyframe ? _fromKeyframe.reparentKeyframe : _fromKeyframe;
         visible = keyframe.visible;
@@ -196,15 +308,17 @@ Item {
                 anchorX = keyframe.anchorX;
             if (!model.recordsAnchorY)
                 anchorY = keyframe.anchorY;
-            if (!model.recordsScale)
-                transScaleX = transScaleY = keyframe.scale;
+            if (!model.recordsScale) {
+                transScaleX = keyframe.transScaleX;
+                transScaleY = keyframe.transScaleY;
+            }
             if (!model.recordsRotation)
-                transRotation = keyframe.rotation;
+                transRotation = keyframe.transRotation;
             if (!model.recordsOpacity)
                 opacity = keyframe.opacity;
         } else {
-            var reparentKeyframeMs = keyframe.time * model.msPerFrame
-            var advanceMs = (spriteTime * model.msPerFrame) - reparentKeyframeMs;
+            var reparentKeyframeMs = keyframe.time * model.mpf
+            var advanceMs = (spriteTime * model.mpf) - reparentKeyframeMs;
             if (!model.recordsPositionX)
                 x = _interpolated(keyframe.x, _toKeyframe.x, advanceMs, "linear");
             if (!model.recordsPositionY)
@@ -214,10 +328,12 @@ Item {
                 anchorX = _interpolated(keyframe.anchorX, _toKeyframe.anchorX, advanceMs, "linear");
             if (!model.recordsAnchorY)
                 anchorY = _interpolated(keyframe.anchorY, _toKeyframe.anchorY, advanceMs, "linear");
-            if (!model.recordsScale)
-                transScaleX = transScaleY = _interpolated(keyframe.scale, _toKeyframe.scale, advanceMs, "linear");
+            if (!model.recordsScale) {
+                transScaleX = _interpolated(keyframe.transScaleX, _toKeyframe.transScaleX, advanceMs, "linear");
+                transScaleY = _interpolated(keyframe.transScaleY, _toKeyframe.transScaleY, advanceMs, "linear");
+            }
             if (!model.recordsRotation)
-                transRotation = _interpolated(keyframe.rotation, _toKeyframe.rotation, advanceMs, "linear");
+                transRotation = _interpolated(keyframe.transRotation, _toKeyframe.transRotation, advanceMs, "linear");
             if (!model.recordsOpacity)
                 opacity = _interpolated(keyframe.opacity, _toKeyframe.opacity, advanceMs, "linear");
         }
@@ -226,9 +342,9 @@ Item {
     function _interpolated(from, to, advanceMs, curve)
     {
         // Ignore curve for now:
-        var fromStateMs = _fromKeyframe.time * model.msPerFrame
-        var totalTimeBetweenStatesMs = (_toKeyframe.time * model.msPerFrame) - fromStateMs;
-        return from + (((to - from) / totalTimeBetweenStatesMs) * advanceMs);
+        var fromKeyframeMs = _fromKeyframe.time * model.mpf
+        var timeDiff = (_toKeyframe.time * model.mpf) - fromKeyframeMs;
+        return from + (((to - from) / timeDiff) * advanceMs);
     }
 
     function _updateCurrentKeyframes(time)
@@ -296,9 +412,9 @@ Item {
                 break;
             low = i + 1
         }
-        var state = keyframes[i];
-        state.volatileIndex = i;
-        return state;
+        var keyframe = keyframes[i];
+        keyframe.volatileIndex = i;
+        return keyframe;
     }
 
     function changeParent(newParent)
@@ -316,7 +432,7 @@ Item {
         parent = null;
         parent = newParent
 
-        if (!myApp.model.inLiveDrag)
+        if (!_firstKeyframeInSequence)
             _interpolate(spriteTime);
     }
 

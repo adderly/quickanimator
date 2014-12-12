@@ -9,8 +9,10 @@ Rectangle {
 
     onVisibleChanged: {
         if (visible) {
-            if (searchText)
+            if (searchText) {
                 searchText.forceActiveFocus()
+                searchText.selectAll()
+            }
         } else {
             Qt.inputMethod.hide()
             searchText.focus = false
@@ -26,8 +28,11 @@ Rectangle {
                 listView.model = 0
                 images = new Array;
                 var imageTags = doc.responseText.match(/<img[^>]*>/g)
-                if (imageTags.length == 0)
+                if (!imageTags || imageTags.length == 0) {
+                    print("Problems loading images:", doc.statusText, doc.responseText)
                     return;
+                }
+
                 for (var i = 0; i < imageTags.length; ++i) {
                     var tag = imageTags[i];
                     var index = tag.indexOf("src");
@@ -51,8 +56,13 @@ Rectangle {
 
         TextField {
             id: searchText
-            width: parent.width
-            onTextChanged: search();
+            y: 2
+            z: 1
+            anchors.left: parent.left
+            anchors.right: closeButton.left
+            anchors.leftMargin: 2
+            anchors.rightMargin: 2
+            onAccepted: search();
             inputMethodHints: Qt.ImhNoPredictiveText
         }
 
@@ -82,6 +92,27 @@ Rectangle {
                         myApp.addImage(images[index])
                     }
                 }
+            }
+        }
+
+        Rectangle {
+            id: closeButton
+            y: 2
+            anchors.right: parent.right
+            anchors.verticalCenter: searchText.verticalCenter
+            anchors.rightMargin: 2
+            width: 30
+            height: width
+            radius: width
+            color: "red"
+            Text {
+                text: "X"
+                color: "white"
+                anchors.centerIn: parent
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.visible = false
             }
         }
     }

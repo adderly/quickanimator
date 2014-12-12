@@ -1,11 +1,12 @@
 import QtQuick 2.1
 import QtQuick.Controls 1.0
 import QtQuick.Layouts 1.0
+import QtQuick.Window 2.0
 
 ApplicationWindow {
     id: myApp
     visible: true
-//    visibility: Qt.Window
+    visibility: touchUI ? Window.FullScreen : Window.Windowed
     width: 1500
     height: 600
 
@@ -14,16 +15,18 @@ ApplicationWindow {
     property bool touchUI: Qt.platform.os === "ios"
 
     property alias stage: stage
-    property alias playMenu: playMenu
-    property alias timelineFlickable: timelineFlickable
+    property alias menuController: menuController
+    property alias timeController: timeController
+    property alias timeline: timeline
     property alias searchView: searchView
-
-    property TimelineMenu menu
-    property Flickable layerTreeFlickable
-    property FlickableMouseArea msPerFrameFlickable
 
     property Style style: Style {}
     property Model model: Model {}
+
+    property bool flicking: !model.hasSelection || menuToggleButton.pressed
+
+    property bool controlPressed: false
+    onControlPressedChanged: menuToggleButton.setPressed(controlPressed, true)
 
     FocusScope {
         id: focusScope
@@ -40,14 +43,18 @@ ApplicationWindow {
             if (!(event.modifiers & Qt.ControlModifier))
                 return;
 
+            controlPressed = true
+
             if (event.key === Qt.Key_P) {
-                timelineFlickable.userPlay = !timelineFlickable.userPlay;
-            } else if (event.key === Qt.Key_M) {
-               menuToggleButton.clicked(1)
-            } else if (event.key === Qt.Key_R) {
-                menu.interactionPlayButton.checked = !menu.interactionPlayButton.checked;
+                timeController.userPlay = !timeController.userPlay;
             } else if (event.key === Qt.Key_S) {
                 searchView.visible = true
+            } else if (event.key === Qt.Key_A) {
+                menuController.showActionMenu();
+                menuToggleButton.clicked(1)
+            } else if (event.key === Qt.Key_E) {
+                menuController.showEditMenu();
+                menuToggleButton.clicked(1)
             } else if (event.key === Qt.Key_Left) {
                 model.setTime(0);
             } else if (event.key === Qt.Key_Up) {
@@ -57,19 +64,23 @@ ApplicationWindow {
             }
         }
 
+        Keys.onReleased: {
+            controlPressed = false
+        }
+
         Stage {
             id: stage
             anchors.fill: parent
-            flickable: (menuToggleButton.pressed || flickable.touchCount > 1) ? null : flickable
+            flickable: flickable
         }
 
-        TimelineCanvas {
+        Timeline {
             id: timeline
             anchors.left: parent.left
             anchors.right: actionLabel.left
             anchors.rightMargin: 4
             height: 15
-            opacity: timelineFlickable.userPlay ? 0 : 1
+            opacity: timeController.userPlay ? 0 : 1
             visible: opacity !== 0
             Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
         }
@@ -78,65 +89,47 @@ ApplicationWindow {
             id: actionLabel
             color: "gray"
             width: 50
-            text: !myApp.model.hasSelection ? ""
+            font.family: "Arial"
+            font.pixelSize: 15
+            horizontalAlignment: Text.AlignRight
+            opacity: timeline.opacity
+            text: myApp.flicking ? "Flick"
                   : myApp.model.recordsPositionX || myApp.model.recordsPositionY ? "Move"
                   : myApp.model.recordsRotation ? "Rotate"
                   : myApp.model.recordsScale ? "Scale"
+                  : myApp.model.recordsOpacity ? "Opacity"
+                  : myApp.model.recordsCut ? "Cut"
                   : "Unknown"
 
             anchors.right: recordingIndicator.left
             anchors.rightMargin: 4
         }
 
-        Rectangle {
+        RecordingIndicator {
             id: recordingIndicator
             height: timeline.height - (y * 2)
             width: height
             radius: height
-            color: !model.hasSelection || !stage.flickable ? "lightgray" : stage.timelinePlay ? "red" : model.hasSelection ? "orange" : "lightgray"
+            color: !model.hasSelection || !stage.flickable ? "lightgray" : model.recording ? "red" : model.hasSelection ? "orange" : "lightgray"
             anchors.top: parent.top
             anchors.right: parent.right
             anchors.margins: 2
-            opacity: timeline.opacity
-
-            SequentialAnimation {
-                running: model.hasSelection && stage.flickable && stage.timelinePlay
-                onRunningChanged: if (!running) recordingIndicator.opacity = Qt.binding(function() { return timeline.opacity })
-                loops: Animation.Infinite
-                PauseAnimation { duration: 1000 }
-                PropertyAnimation {
-                    target: recordingIndicator
-                    property: "opacity"
-                    duration: 200
-                    easing.type: Easing.OutQuad
-                    to: 0.0
-                }
-                PauseAnimation { duration: 1000 }
-                PropertyAnimation {
-                    target: recordingIndicator
-                    property: "opacity"
-                    duration: 200
-                    easing.type: Easing.InQuad
-                    to: 1
-                }
-            }
-
         }
 
-        TimelineFlickable {
-            id: timelineFlickable
+        TimeController {
+            id: timeController
             anchors.fill: parent
-            flickable: (model.hasSelection && !menuToggleButton.pressed && flickable.touchCount < 2) ? null : flickable
+            flickable: myApp.flicking ? flickable : null
         }
 
         FlickableMouseArea {
             id: flickable
             anchors.fill: parent
-            momentumRestX: timelineFlickable.playing ? -1 : 0
+            momentumRestX: timeController.playing ? -1 : 0
         }
 
-        PlayMenu {
-            id: playMenu
+        MenuController {
+            id: menuController
             x: menuToggleButton.width
             width: parent.width - x
             height: 70
@@ -145,25 +138,12 @@ ApplicationWindow {
             opacity: 0
             visible: opacity !== 0
             Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-
-            Connections {
-                target: model
-                onHasSelectionChanged: playMenu.showMenuBasedOnContext()
-            }
-
-            function showMenuBasedOnContext()
-            {
-                if (model.hasSelection)
-                    playMenu.showSpriteMenu();
-                else
-                    playMenu.showRootMenu();
-            }
         }
 
         MultiTouchButton {
             id: menuToggleButton
             width: 70
-            height: playMenu.height
+            height: menuController.height
             anchors.bottom: parent.bottom
             Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
@@ -176,23 +156,9 @@ ApplicationWindow {
             }
 
             onClicked: {
-                if (clickCount === 1) {
-                    timelineFlickable.userPlay = false
-                    if (!playMenu.visible)
-                        playMenu.showMenuBasedOnContext()
-                    playMenu.toggleMenuVisible()
-                } else if (clickCount === 2) {
-                    playMenu.showRootMenu()
-                    playMenu.opacity = 1
-                }
                 opacity = 0
+                menuController.toggle()
             }
-        }
-
-        TimelineMenu {
-            id: menu
-            visible: false
-            anchors.fill: parent
         }
 
         SearchView {
@@ -232,8 +198,7 @@ ApplicationWindow {
 
     function addImage(url)
     {
-        var layer = {}
-        layer.sprite = stageSpriteComponent.createObject(stage.sprites, {"objectName":"sprite " + nextSpriteNr++, "image.source":url});
-        model.addLayer(layer);
+        var sprite = stageSpriteComponent.createObject(stage.sprites, {"objectName":"sprite " + nextSpriteNr++, "image.source":url});
+        model.addSprite(sprite);
     }
 }
